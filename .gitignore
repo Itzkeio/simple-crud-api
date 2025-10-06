@@ -1,0 +1,28 @@
+# Go build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+build/
+
+# Modules cache (jangan ignore go.mod/sum!)
+vendor/
+
+# Logs & temp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Env & secrets
+.env
+.env.*
