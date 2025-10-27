@@ -3,88 +3,114 @@ package controllers
 import (
 	"crud-api-golang/initializers"
 	"crud-api-golang/models"
+	"encoding/json"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
+// 🟢 CREATE POST
 func PostsCreate(c *gin.Context) {
-	//Get data off req body
 	var body struct {
 		Body  string
 		Title string
 	}
-	c.Bind(&body)
-	// Create post
-	post := models.Post{Title: body.Title, Body: body.Body}
-
-	result := initializers.DB.Create(&post) // pass pointer of data to Create
-
-	if result.Error != nil {
-		c.Status(400)
+	if err := c.Bind(&body); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request"})
 		return
 	}
-	// Return it
 
-	c.JSON(200, gin.H{
-		"post": post,
-	})
+	post := models.Post{Title: body.Title, Body: body.Body}
+	result := initializers.DB.Create(&post)
+
+	if result.Error != nil {
+		c.JSON(400, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	// 🧹 Clear cache karena ada data baru
+	initializers.Redis.Del(initializers.Ctx, "all_posts")
+
+	c.JSON(200, gin.H{"post": post})
 }
 
+// 🟢 READ ALL (pakai Redis)
 func PostsIndex(c *gin.Context) {
-	//Get posts
+	// Cek dari Redis
+	cached, err := initializers.Redis.Get(initializers.Ctx, "all_posts").Result()
+	if err == nil && cached != "" {
+		// Jika ditemukan di Redis
+		var posts []models.Post
+		json.Unmarshal([]byte(cached), &posts)
+		c.JSON(200, gin.H{
+			"source": "redis",
+			"posts":  posts,
+		})
+		return
+	}
+
+	// Kalau tidak ada di Redis, ambil dari DB
 	var posts []models.Post
 	initializers.DB.Find(&posts)
 
-	//Respond with them
+	// Simpan hasil query ke Redis selama 60 detik
+	jsonData, _ := json.Marshal(posts)
+	initializers.Redis.Set(initializers.Ctx, "all_posts", jsonData, 60*time.Second)
+
 	c.JSON(200, gin.H{
-		"post": posts,
+		"source": "database",
+		"posts":  posts,
 	})
 }
 
+// 🟢 READ ONE
 func PostsShow(c *gin.Context) {
-	//get id off url
 	id := c.Param("id")
-
-	//Get a single post
 	var post models.Post
-	initializers.DB.First(&post, id)
+	result := initializers.DB.First(&post, id)
 
-	c.JSON(200, gin.H{
-		"post": post,
-	})
+	if result.Error != nil {
+		c.JSON(404, gin.H{"error": "Post not found"})
+		return
+	}
 
+	c.JSON(200, gin.H{"post": post})
 }
 
+// 🟢 UPDATE POST
 func PostsUpdate(c *gin.Context) {
-	//Get id off url
 	id := c.Param("id")
 
-	//get data off req body
 	var body struct {
 		Body  string
 		Title string
 	}
-	c.Bind(&body)
+	if err := c.Bind(&body); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request"})
+		return
+	}
 
-	//Find the post were updating
 	var post models.Post
 	initializers.DB.First(&post, id)
 
-	//Update
 	initializers.DB.Model(&post).Updates(models.Post{
 		Title: body.Title,
 		Body:  body.Body,
 	})
-	//Respond with it
-	c.JSON(200, gin.H{
-		"post": post,
-	})
+
+	// 🧹 Clear cache agar data di Redis diperbarui nanti
+	initializers.Redis.Del(initializers.Ctx, "all_posts")
+
+	c.JSON(200, gin.H{"post": post})
 }
 
+// 🟢 DELETE POST
 func PostsDelete(c *gin.Context) {
 	id := c.Param("id")
-
 	initializers.DB.Delete(&models.Post{}, id)
+
+	// 🧹 Clear cache setelah delete
+	initializers.Redis.Del(initializers.Ctx, "all_posts")
 
 	c.Status(200)
 }
